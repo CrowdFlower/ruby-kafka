@@ -120,7 +120,8 @@ module Kafka
       49 => InvalidProducerIDMappingError,
       50 => InvalidTransactionTimeoutError,
       51 => ConcurrentTransactionError,
-      52 => TransactionCoordinatorFencedError
+      52 => TransactionCoordinatorFencedError,
+      59 => UnknownProducerIdError
     }
 
     # A mapping from int to corresponding resource type in symbol.
