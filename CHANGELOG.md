@@ -2,6 +2,14 @@
 
 Changes and additions to the library will be listed here.
 
+## Unreleased
+
+- Add client methods to manage configs (#759)
+
+## 0.7.10
+
+- Fix logger again (#762)
+
 ## 0.7.9
 
 - Fix SSL authentication for ruby < 2.4.0 (#742)
