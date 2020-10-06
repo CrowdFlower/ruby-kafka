@@ -452,8 +452,6 @@ module Kafka
     end
 
     def join_group
-      old_generation_id = @group.generation_id
-
       @group.join
 
       # we observed duplicates after rebalance because
