@@ -17,8 +17,8 @@ module Kafka
       transactional: false,
       transactional_id: nil,
       transactional_timeout: DEFAULT_TRANSACTION_TIMEOUT,
-      retry_backoff: 100,
-      max_retries: 5
+      retry_backoff: 0.02,
+      max_retries: 50
     )
       @cluster = cluster
       @logger = TaggedLogger.new(logger)
@@ -286,8 +286,8 @@ module Kafka
       if @retry_counter > @max_retries
         raise e
       end
-      @logger.info("#{e.class.name}, sleeping #{@retry_backoff} , retrying...")
-      sleep @retry_backoff
+      @logger.info("#{e.class.name}, sleeping #{(@retry_counter * @retry_backoff)} seconds, retrying...")
+      sleep(@retry_counter * @retry_backoff)
       retry
     end
 

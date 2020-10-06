@@ -456,20 +456,13 @@ module Kafka
 
       @group.join
 
-      if old_generation_id && @group.generation_id != old_generation_id + 1
-        # We've been out of the group for at least an entire generation, no
-        # sense in trying to hold on to offset data
-        clear_current_offsets
-        @offset_manager.clear_offsets
-      else
-        # After rejoining the group we may have been assigned a new set of
-        # partitions. Keeping the old offset commits around forever would risk
-        # having the consumer go back and reprocess messages if it's assigned
-        # a partition it used to be assigned to way back. For that reason, we
-        # only keep commits for the partitions that we're still assigned.
-        clear_current_offsets(excluding: @group.assigned_partitions)
-        @offset_manager.clear_offsets_excluding(@group.assigned_partitions)
-      end
+      # we observed duplicates after rebalance because
+      # consumer reads old offsets from its buffer
+      # that's why we clear buffer to make it fetch offsets from Kafka
+      # moreover,
+      # native Java client always gets offsets from Kafka
+      clear_current_offsets
+      @offset_manager.clear_offsets
 
       @fetcher.reset
 
