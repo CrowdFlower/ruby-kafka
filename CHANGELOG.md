@@ -4,7 +4,28 @@ Changes and additions to the library will be listed here.
 
 ## Unreleased
 
+- Support custom assignment strategy (#846).
+- Improved Exceptions in TransactionManager (#862).
+
+## 1.2.0
+
+- Add producer consumer interceptors (#837).
+- Add support for configuring the client partitioner (#848).
+
+## 1.1.0
+
+- Extra sanity checking when marking offsets as processed (#824).
+- Make `verify_hostname` settable for SSL contexts (#828).
+- Instrument `create_time` from last message in batch (#811).
+- Add client function for fetching topic replica count (#822).
+- Allow consumers to refresh the topic lists (#818).
+- Disconnect after leaving a group (#817).
+- Use `max_wait_time` as the sleep instead of hardcoded 2 seconds (#825).
+
+## 1.0.0
+
 - Add client methods to manage configs (#759)
+- Support Kafka 2.3 and 2.4.
 
 ## 0.7.10
 

@@ -7,6 +7,7 @@ require "kafka/produce_operation"
 require "kafka/pending_message_queue"
 require "kafka/pending_message"
 require "kafka/compressor"
+require "kafka/interceptors"
 
 module Kafka
   # Allows sending messages to a Kafka cluster.
@@ -129,7 +130,9 @@ module Kafka
   class Producer
     class AbortTransaction < StandardError; end
 
-    def initialize(cluster:, transaction_manager:, logger:, instrumenter:, compressor:, ack_timeout:, required_acks:, max_retries:, retry_backoff:, max_buffer_size:, max_buffer_bytesize:)
+    def initialize(cluster:, transaction_manager:, logger:, instrumenter:, compressor:, ack_timeout:,
+                   required_acks:, max_retries:, retry_backoff:, max_buffer_size:,
+                   max_buffer_bytesize:, partitioner:, interceptors: [])
       @cluster = cluster
       @transaction_manager = transaction_manager
       @logger = TaggedLogger.new(logger)
@@ -141,6 +144,8 @@ module Kafka
       @max_buffer_size = max_buffer_size
       @max_buffer_bytesize = max_buffer_bytesize
       @compressor = compressor
+      @partitioner = partitioner
+      @interceptors = Interceptors.new(interceptors: interceptors, logger: logger)
 
       # The set of topics that are produced to.
       @target_topics = Set.new
@@ -188,15 +193,18 @@ module Kafka
     # @raise [BufferOverflow] if the maximum buffer size has been reached.
     # @return [nil]
     def produce(value, key: nil, headers: {}, topic:, partition: nil, partition_key: nil, create_time: Time.now)
-      message = PendingMessage.new(
+      # We want to fail fast if `topic` isn't a String
+      topic = topic.to_str
+
+      message = @interceptors.call(PendingMessage.new(
         value: value && value.to_s,
         key: key && key.to_s,
         headers: headers,
-        topic: topic.to_s,
+        topic: topic,
         partition: partition && Integer(partition),
         partition_key: partition_key && partition_key.to_s,
         create_time: create_time
-      )
+      ))
 
       if buffer_size >= @max_buffer_size
         buffer_overflow topic,
@@ -452,7 +460,7 @@ module Kafka
 
           if partition.nil?
             partition_count = @cluster.partitions_for(message.topic).count
-            partition = Partitioner.partition_for_key(partition_count, message)
+            partition = @partitioner.call(partition_count, message)
           end
 
           @buffer.write(

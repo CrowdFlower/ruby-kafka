@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "timecop"
+require "fake_consumer_interceptor"
+require "kafka/interceptors"
 
 describe Kafka::Consumer do
   let(:cluster) { double(:cluster) }
@@ -80,15 +82,10 @@ describe Kafka::Consumer do
     }
 
     before do
-      @count = 0
-      allow(fetcher).to receive(:poll) {
-        @count += 1
-        if @count == 1
-          [:batches, old_fetched_batches]
-        else
-          [:batches, fetched_batches]
-        end
-      }
+      allow(fetcher).to receive(:poll).and_return(
+        [:batches, old_fetched_batches], # first call
+        [:batches, fetched_batches] # any time after the first call
+      )
     end
   end
 
@@ -121,15 +118,10 @@ describe Kafka::Consumer do
     }
 
     before do
-      @count = 0
-      allow(fetcher).to receive(:poll) {
-        @count += 1
-        if @count == 1
-          [:batches, fetched_batches]
-        else
-          [:batches, batches_after_partition_reassignment]
-        end
-      }
+      allow(fetcher).to receive(:poll).and_return(
+        [:batches, fetched_batches], # first call
+        [:batches, batches_after_partition_reassignment] # any time after the first call
+      )
     end
   end
 
@@ -137,12 +129,14 @@ describe Kafka::Consumer do
     allow(cluster).to receive(:add_target_topics)
     allow(cluster).to receive(:disconnect)
     allow(cluster).to receive(:refresh_metadata_if_necessary!)
+    allow(cluster).to receive(:mark_as_stale!)
 
     allow(offset_manager).to receive(:commit_offsets)
     allow(offset_manager).to receive(:commit_offsets_if_necessary)
     allow(offset_manager).to receive(:set_default_offset)
     allow(offset_manager).to receive(:mark_as_processed)
     allow(offset_manager).to receive(:next_offset_for) { 42 }
+    allow(offset_manager).to receive(:clear_offsets)
 
     allow(group).to receive(:subscribe)
     allow(group).to receive(:group_id)
@@ -151,11 +145,15 @@ describe Kafka::Consumer do
     allow(group).to receive(:subscribed_partitions) { assigned_partitions }
     allow(group).to receive(:assigned_to?) { false }
     allow(group).to receive(:assigned_to?).with('greetings', 0) { true }
+    allow(group).to receive(:generation_id) { 1 }
+    allow(group).to receive(:join)
+    allow(group).to receive(:assigned_partitions) { [] }
 
     allow(heartbeat).to receive(:trigger)
 
     allow(fetcher).to receive(:data?) { fetched_batches.any? }
     allow(fetcher).to receive(:poll) { [:batches, fetched_batches] }
+    allow(fetcher).to receive(:reset)
 
     consumer.subscribe("greetings")
   end
@@ -517,5 +515,51 @@ describe Kafka::Consumer do
     subject(:method_original_name) { consumer.method(:send_heartbeat).original_name }
 
     it { expect(method_original_name).to eq(:trigger_heartbeat!) }
+  end
+
+  describe '#interceptor' do
+    it "creates and stops a consumer with interceptor" do
+      interceptor = FakeConsumerInterceptor.new
+      consumer = Kafka::Consumer.new(
+        cluster: cluster,
+        logger: logger,
+        instrumenter: instrumenter,
+        group: group,
+        offset_manager: offset_manager,
+        fetcher: fetcher,
+        session_timeout: session_timeout,
+        heartbeat: heartbeat,
+        interceptors: [interceptor]
+      )
+
+      consumer.stop
+    end
+
+    it "chains call" do
+      interceptor1 = FakeConsumerInterceptor.new(append_s: 'hello2')
+      interceptor2 = FakeConsumerInterceptor.new(append_s: 'hello3')
+      interceptors = Kafka::Interceptors.new(interceptors: [interceptor1, interceptor2], logger: logger)
+      intercepted_batch = interceptors.call(fetched_batches[0])
+
+      expect(intercepted_batch.messages[0].value).to eq "hellohello2hello3"
+    end
+
+    it "does not break the call chain" do
+      interceptor1 = FakeConsumerInterceptor.new(append_s: 'hello2', on_call_error: true)
+      interceptor2 = FakeConsumerInterceptor.new(append_s: 'hello3')
+      interceptors = Kafka::Interceptors.new(interceptors: [interceptor1, interceptor2], logger: logger)
+      intercepted_batch = interceptors.call(fetched_batches[0])
+
+      expect(intercepted_batch.messages[0].value).to eq "hellohello3"
+    end
+
+    it "returns original batch when all interceptors fail" do
+      interceptor1 = FakeConsumerInterceptor.new(append_s: 'hello2', on_call_error: true)
+      interceptor2 = FakeConsumerInterceptor.new(append_s: 'hello3', on_call_error: true)
+      interceptors = Kafka::Interceptors.new(interceptors: [interceptor1, interceptor2], logger: logger)
+      intercepted_batch = interceptors.call(fetched_batches[0])
+
+      expect(intercepted_batch.messages[0].value).to eq "hello"
+    end
   end
 end

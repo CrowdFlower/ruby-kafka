@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   DESC
 
   spec.homepage      = "https://github.com/zendesk/ruby-kafka"
-  spec.license       = "Apache License Version 2.0"
+  spec.license       = "Apache-2.0"
 
   spec.required_ruby_version = '>= 2.1.0'
 
@@ -42,7 +42,7 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "zstd-ruby"
   spec.add_development_dependency "colored"
   spec.add_development_dependency "rspec_junit_formatter", "0.2.2"
-  spec.add_development_dependency "dogstatsd-ruby", ">= 3.0.0", "< 5.0.0"
+  spec.add_development_dependency "dogstatsd-ruby", ">= 4.0.0", "< 5.0.0"
   spec.add_development_dependency "statsd-ruby"
   spec.add_development_dependency "prometheus-client", "~> 0.10.0"
   spec.add_development_dependency "ruby-prof"

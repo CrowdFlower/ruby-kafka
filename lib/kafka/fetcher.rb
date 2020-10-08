@@ -4,7 +4,7 @@ require "kafka/fetch_operation"
 
 module Kafka
   class Fetcher
-    attr_reader :queue
+    attr_reader :queue, :max_wait_time
 
     def initialize(cluster:, logger:, instrumenter:, max_queue_size:, group:)
       @cluster = cluster
@@ -16,6 +16,9 @@ module Kafka
       @queue = Queue.new
       @commands = Queue.new
       @next_offsets = Hash.new { |h, k| h[k] = {} }
+
+      # We are only running when someone calls start.
+      @running = false
 
       # Long poll until at least this many bytes can be fetched.
       @min_bytes = 1

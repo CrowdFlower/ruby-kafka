@@ -54,7 +54,7 @@ describe "Client API", functional: true do
     end
 
     expect(result.state).to eq('Stable')
-    expect(result.protocol).to eq('standard')
+    expect(result.protocol).to eq('roundrobin')
     expect(result.members.count).to eq(1)
 
     member = result.members.first
@@ -89,6 +89,30 @@ describe "Client API", functional: true do
     expect(result.members).to be_empty
   end
 
+  example "fetching offsets for consumer group with committed offsets" do
+    group_id = "consumer-group=#{SecureRandom.uuid}"
+
+    kafka.deliver_message('test', topic: topic, partition: 0)
+    consumer = kafka.consumer(group_id: group_id)
+    consumer.subscribe(topic)
+    consumer.each_message do |msg|
+      consumer.stop
+    end
+
+    result = kafka.fetch_group_offsets(group_id)
+    expect(result).to match({
+      topic => {
+        0 => an_instance_of(Kafka::Protocol::OffsetFetchResponse::PartitionOffsetInfo)
+      }
+    })
+  end
+
+  example "fetching offsets for a non-existent consumer group" do
+    group_id = "consumer-group=#{SecureRandom.uuid}"
+    result = kafka.fetch_group_offsets(group_id)
+    expect(result).to eq({})
+  end
+
   example "fetching the partition count for a topic" do
     expect(kafka.partitions_for(topic)).to eq 3
   end
@@ -104,6 +128,23 @@ describe "Client API", functional: true do
     }.not_to raise_exception
 
     expect(kafka.partitions_for(topic)).to be > 0
+  end
+
+  example "fetching the replica count for a topic" do
+    expect(kafka.replica_count_for(topic)).to eq 1
+  end
+
+  example "fetching the replica count for a topic that doesn't yet exist" do
+    topic = "unknown-topic-#{SecureRandom.uuid}"
+
+    expect { kafka.replica_count_for(topic) }.to raise_exception(Kafka::LeaderNotAvailable)
+
+    # Eventually the call should succeed.
+    expect {
+      10.times { kafka.replica_count_for(topic) rescue nil }
+    }.not_to raise_exception
+
+    expect(kafka.replica_count_for(topic)).to be > 0
   end
 
   example "delivering a message to a topic" do

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "kafka/consumer_group"
+require "kafka/interceptors"
 require "kafka/offset_manager"
 require "kafka/fetcher"
 require "kafka/pause"
@@ -44,7 +45,8 @@ module Kafka
   #
   class Consumer
 
-    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:, session_timeout:, heartbeat:)
+    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:,
+                   session_timeout:, heartbeat:, refresh_topic_interval: 0, interceptors: [])
       @cluster = cluster
       @logger = TaggedLogger.new(logger)
       @instrumenter = instrumenter
@@ -53,6 +55,8 @@ module Kafka
       @session_timeout = session_timeout
       @fetcher = fetcher
       @heartbeat = heartbeat
+      @refresh_topic_interval = refresh_topic_interval
+      @interceptors = Interceptors.new(interceptors: interceptors, logger: logger)
 
       @pauses = Hash.new {|h, k|
         h[k] = Hash.new {|h2, k2|
@@ -73,6 +77,15 @@ module Kafka
       #   when user commits message other than last in a batch, this would make ruby-kafka refetch
       #   some already consumed messages
       @current_offsets = Hash.new { |h, k| h[k] = {} }
+
+      # Map storing subscribed topics with their configuration
+      @subscribed_topics = Hash.new
+
+      # Set storing topics that matched topics in @subscribed_topics
+      @matched_topics = Set.new
+
+      # Whether join_group must be executed again because new topics are added
+      @join_group_for_new_topics = false
     end
 
     # Subscribes the consumer to a topic.
@@ -97,13 +110,12 @@ module Kafka
     def subscribe(topic_or_regex, default_offset: nil, start_from_beginning: true, max_bytes_per_partition: 1048576)
       default_offset ||= start_from_beginning ? :earliest : :latest
 
-      if topic_or_regex.is_a?(Regexp)
-        cluster_topics.select { |topic| topic =~ topic_or_regex }.each do |topic|
-          subscribe_to_topic(topic, default_offset, start_from_beginning, max_bytes_per_partition)
-        end
-      else
-        subscribe_to_topic(topic_or_regex, default_offset, start_from_beginning, max_bytes_per_partition)
-      end
+      @subscribed_topics[topic_or_regex] = {
+        default_offset: default_offset,
+        start_from_beginning: start_from_beginning,
+        max_bytes_per_partition: max_bytes_per_partition
+      }
+      scan_for_subscribing
 
       nil
     end
@@ -116,7 +128,6 @@ module Kafka
     def stop
       @running = false
       @fetcher.stop
-      @cluster.disconnect
     end
 
     # Pause processing of a specific topic partition.
@@ -212,6 +223,7 @@ module Kafka
         batches = fetch_batches
 
         batches.each do |batch|
+          batch = @interceptors.call(batch)
           batch.messages.each do |message|
             notification = {
               topic: message.topic,
@@ -303,11 +315,13 @@ module Kafka
           unless batch.empty?
             raw_messages = batch.messages
             batch.messages = raw_messages.reject(&:is_control_record)
+            batch = @interceptors.call(batch)
 
             notification = {
               topic: batch.topic,
               partition: batch.partition,
               last_offset: batch.last_offset,
+              last_create_time: batch.messages.last && batch.messages.last.create_time,
               offset_lag: batch.offset_lag,
               highwater_mark_offset: batch.highwater_mark_offset,
               message_count: batch.messages.count,
@@ -401,6 +415,7 @@ module Kafka
       while running?
         begin
           @instrumenter.instrument("loop.consumer") do
+            refresh_topic_list_if_enabled
             yield
           end
         rescue HeartbeatError
@@ -432,6 +447,7 @@ module Kafka
       # important that members explicitly tell Kafka when they're leaving.
       make_final_offsets_commit!
       @group.leave rescue nil
+      @cluster.disconnect
       @running = false
       @logger.pop_tags
     end
@@ -452,6 +468,8 @@ module Kafka
     end
 
     def join_group
+      @join_group_for_new_topics = false
+
       @group.join
 
       # we observed duplicates after rebalance because
@@ -504,11 +522,19 @@ module Kafka
       end
     end
 
+    def refresh_topic_list_if_enabled
+      return if @refresh_topic_interval <= 0
+      return if @refreshed_at && @refreshed_at + @refresh_topic_interval > Time.now
+
+      scan_for_subscribing
+      @refreshed_at = Time.now
+    end
+
     def fetch_batches
       # Return early if the consumer has been stopped.
       return [] if shutting_down?
 
-      join_group unless @group.member?
+      join_group if !@group.member? || @join_group_for_new_topics
 
       trigger_heartbeat
 
@@ -516,7 +542,7 @@ module Kafka
 
       if !@fetcher.data?
         @logger.debug "No batches to process"
-        sleep 2
+        sleep(@fetcher.max_wait_time || 2)
         []
       else
         tag, message = @fetcher.poll
@@ -562,10 +588,34 @@ module Kafka
       end
     end
 
+    def scan_for_subscribing
+      @subscribed_topics.each do |topic_or_regex, config|
+        default_offset = config.fetch(:default_offset)
+        start_from_beginning = config.fetch(:start_from_beginning)
+        max_bytes_per_partition = config.fetch(:max_bytes_per_partition)
+        if topic_or_regex.is_a?(Regexp)
+          subscribe_to_regex(topic_or_regex, default_offset, start_from_beginning, max_bytes_per_partition)
+        else
+          subscribe_to_topic(topic_or_regex, default_offset, start_from_beginning, max_bytes_per_partition)
+        end
+      end
+    end
+
+    def subscribe_to_regex(topic_regex, default_offset, start_from_beginning, max_bytes_per_partition)
+      cluster_topics.select { |topic| topic =~ topic_regex }.each do |topic|
+        subscribe_to_topic(topic, default_offset, start_from_beginning, max_bytes_per_partition)
+      end
+    end
+
     def subscribe_to_topic(topic, default_offset, start_from_beginning, max_bytes_per_partition)
+      return if @matched_topics.include?(topic)
+      @matched_topics.add(topic)
+      @join_group_for_new_topics = true
+
       @group.subscribe(topic)
       @offset_manager.set_default_offset(topic, default_offset)
       @fetcher.subscribe(topic, max_bytes_per_partition: max_bytes_per_partition)
+      @cluster.mark_as_stale!
     end
 
     def cluster_topics

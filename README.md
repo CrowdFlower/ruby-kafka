@@ -26,6 +26,7 @@ A Ruby client library for [Apache Kafka](http://kafka.apache.org/), a distribute
         4. [Shutting Down a Consumer](#shutting-down-a-consumer)
         5. [Consuming Messages in Batches](#consuming-messages-in-batches)
         6. [Balancing Throughput and Latency](#balancing-throughput-and-latency)
+        7. [Customizing Partition Assignment Strategy](#customizing-partition-assignment-strategy)
     4. [Thread Safety](#thread-safety)
     5. [Logging](#logging)
     6. [Instrumentation](#instrumentation)
@@ -113,6 +114,21 @@ Or install it yourself as:
     <td>Limited support</td>
     <td>Limited support</td>
   </tr>
+  <tr>
+    <th>Kafka 2.3</th>
+    <td>Limited support</td>
+    <td>Limited support</td>
+  </tr>
+  <tr>
+    <th>Kafka 2.4</th>
+    <td>Limited support</td>
+    <td>Limited support</td>
+  </tr>
+  <tr>
+    <th>Kafka 2.5</th>
+    <td>Limited support</td>
+    <td>Limited support</td>
+  </tr>
 </table>
 
 This library is targeting Kafka 0.9 with the v0.4.x series and Kafka 0.10 with the v0.5.x series. There's limited support for Kafka 0.8, and things should work with Kafka 0.11, although there may be performance issues due to changes in the protocol.
@@ -124,6 +140,10 @@ This library is targeting Kafka 0.9 with the v0.4.x series and Kafka 0.10 with t
 - **Kafka 1.0:** Everything that works with Kafka 0.11 should still work, but so far no features specific to Kafka 1.0 have been added.
 - **Kafka 2.0:** Everything that works with Kafka 1.0 should still work, but so far no features specific to Kafka 2.0 have been added.
 - **Kafka 2.1:** Everything that works with Kafka 2.0 should still work, but so far no features specific to Kafka 2.1 have been added.
+- **Kafka 2.2:** Everything that works with Kafka 2.1 should still work, but so far no features specific to Kafka 2.2 have been added.
+- **Kafka 2.3:** Everything that works with Kafka 2.2 should still work, but so far no features specific to Kafka 2.3 have been added.
+- **Kafka 2.4:** Everything that works with Kafka 2.3 should still work, but so far no features specific to Kafka 2.4 have been added.
+- **Kafka 2.5:** Everything that works with Kafka 2.4 should still work, but so far no features specific to Kafka 2.5 have been added.
 
 This library requires Ruby 2.1 or higher.
 
@@ -328,6 +348,26 @@ partitions = kafka.partitions_for("events")
 partition = PartitioningScheme.assign(partitions, event)
 
 producer.produce(event, topic: "events", partition: partition)
+```
+
+Another option is to configure a custom client partitioner that implements `call(partition_count, message)` and uses the same schema as the other client. For example:
+
+```ruby
+class CustomPartitioner
+  def call(partition_count, message)
+    ...
+  end
+end
+  
+partitioner = CustomPartitioner.new
+Kafka.new(partitioner: partitioner, ...)
+```
+
+Or, simply create a Proc handling the partitioning logic instead of having to add a new class. For example:
+
+```ruby
+partitioner = -> (partition_count, message) { ... }
+Kafka.new(partitioner: partitioner, ...)
 ```
 
 #### Buffering and Error Handling
@@ -704,6 +744,88 @@ consumer.each_message do |message|
 end
 ```
 
+#### Customizing Partition Assignment Strategy
+
+In some cases, you might want to assign more partitions to some consumers. For example, in applications inserting some records to a database, the consumers running on hosts nearby the database can process more messages than the consumers running on other hosts.
+You can use a custom assignment strategy by passing an object that implements `#call` as the argument `assignment_strategy` like below:
+
+```ruby
+class CustomAssignmentStrategy
+  def initialize(user_data)
+    @user_data = user_data
+  end
+
+  # Assign the topic partitions to the group members.
+  #
+  # @param cluster [Kafka::Cluster]
+  # @param members [Hash<String, Kafka::Protocol::JoinGroupResponse::Metadata>] a hash
+  #   mapping member ids to metadata
+  # @param partitions [Array<Kafka::ConsumerGroup::Assignor::Partition>] a list of
+  #   partitions the consumer group processes
+  # @return [Hash<String, Array<Kafka::ConsumerGroup::Assignor::Partition>] a hash
+  #   mapping member ids to partitions.
+  def call(cluster:, members:, partitions:)
+    ...
+  end
+end
+
+strategy = CustomAssignmentStrategy.new("some-host-information")
+consumer = kafka.consumer(group_id: "some-group", assignment_strategy: strategy)
+```
+
+`members` is a hash mapping member IDs to metadata, and partitions is a list of partitions the consumer group processes. The method `call` must return a hash mapping member IDs to partitions. For example, the following strategy assigns partitions randomly:
+
+```ruby
+class RandomAssignmentStrategy
+  def call(cluster:, members:, partitions:)
+    member_ids = members.keys
+    partitions.each_with_object(Hash.new {|h, k| h[k] = [] }) do |partition, partitions_per_member|
+      partitions_per_member[member_ids[rand(member_ids.count)]] << partition
+    end
+  end
+end
+```
+
+If the strategy needs user data, you should define the method `user_data` that returns user data on each consumer. For example, the following strategy uses the consumers' IP addresses as user data:
+
+```ruby
+class NetworkTopologyAssignmentStrategy
+  def user_data
+    Socket.ip_address_list.find(&:ipv4_private?).ip_address
+  end
+
+  def call(cluster:, members:, partitions:)
+    # Display the pair of the member ID and IP address
+    members.each do |id, metadata|
+      puts "#{id}: #{metadata.user_data}"
+    end
+
+    # Assign partitions considering the network topology
+    ...
+  end
+end
+```
+
+Note that the strategy uses the class name as the default protocol name. You can change it by defining the method `protocol_name`:
+
+```ruby
+class NetworkTopologyAssignmentStrategy
+  def protocol_name
+    "networktopology"
+  end
+
+  def user_data
+    Socket.ip_address_list.find(&:ipv4_private?).ip_address
+  end
+
+  def call(cluster:, members:, partitions:)
+    ...
+  end
+end
+```
+
+As the method `call` might receive different user data from what it expects, you should avoid using the same protocol name as another strategy that uses different user data.
+
 
 ### Thread Safety
 
@@ -933,6 +1055,8 @@ This configures the store to look up CA certificates from the system default cer
 
 In order to authenticate the client to the cluster, you need to pass in a certificate and key created for the client and trusted by the brokers.
 
+**NOTE**: You can disable hostname validation by passing `ssl_verify_hostname: false`.
+
 ```ruby
 kafka = Kafka.new(
   ["kafka1:9092"],
@@ -940,6 +1064,7 @@ kafka = Kafka.new(
   ssl_client_cert: File.read('my_client_cert.pem'),
   ssl_client_cert_key: File.read('my_client_cert_key.pem'),
   ssl_client_cert_key_password: 'my_client_cert_key_password',
+  ssl_verify_hostname: false,
   # ...
 )
 ```

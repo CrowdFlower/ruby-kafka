@@ -62,8 +62,17 @@ module Kafka
     #
     # @param sasl_over_ssl [Boolean] whether to enforce SSL with SASL
     #
+    # @param ssl_ca_certs_from_system [Boolean] whether to use the CA certs from the
+    #   system's default certificate store.
+    #
+    # @param partitioner [Partitioner, nil] the partitioner that should be used by the client.
+    #
     # @param sasl_oauth_token_provider [Object, nil] OAuthBearer Token Provider instance that
     #   implements method token. See {Sasl::OAuth#initialize}
+    #
+    # @param ssl_verify_hostname [Boolean, true] whether to verify that the host serving
+    #   the SSL certificate and the signing chain of the certificate have the correct domains
+    #   based on the CA certificate
     #
     # @return [Client]
     def initialize(seed_brokers:, client_id: "ruby-kafka", logger: nil, connect_timeout: nil, socket_timeout: nil,
@@ -71,7 +80,7 @@ module Kafka
                    ssl_client_cert_key_password: nil, ssl_client_cert_chain: nil, sasl_gssapi_principal: nil,
                    sasl_gssapi_keytab: nil, sasl_plain_authzid: '', sasl_plain_username: nil, sasl_plain_password: nil,
                    sasl_scram_username: nil, sasl_scram_password: nil, sasl_scram_mechanism: nil,
-                   sasl_over_ssl: true, ssl_ca_certs_from_system: false, sasl_oauth_token_provider: nil, ssl_verify_hostname: true)
+                   sasl_over_ssl: true, ssl_ca_certs_from_system: false, partitioner: nil, sasl_oauth_token_provider: nil, ssl_verify_hostname: true)
       @logger = TaggedLogger.new(logger)
       @instrumenter = Instrumenter.new(client_id: client_id)
       @seed_brokers = normalize_seed_brokers(seed_brokers)
@@ -115,6 +124,7 @@ module Kafka
       )
 
       @cluster = initialize_cluster
+      @partitioner = partitioner || Partitioner.new
     end
 
     # Delivers a single message to the Kafka cluster.
@@ -138,6 +148,9 @@ module Kafka
     def deliver_message(value, key: nil, headers: {}, topic:, partition: nil, partition_key: nil, retries: 1)
       create_time = Time.now
 
+      # We want to fail fast if `topic` isn't a String
+      topic = topic.to_str
+
       message = PendingMessage.new(
         value: value,
         key: key,
@@ -150,7 +163,7 @@ module Kafka
 
       if partition.nil?
         partition_count = @cluster.partitions_for(topic).count
-        partition = Partitioner.partition_for_key(partition_count, message)
+        partition = @partitioner.call(partition_count, message)
       end
 
       buffer = MessageBuffer.new
@@ -241,6 +254,9 @@ module Kafka
     #   be in a message set before it should be compressed. Note that message sets
     #   are per-partition rather than per-topic or per-producer.
     #
+    # @param interceptors [Array<Object>] a list of producer interceptors the implement
+    #   `call(Kafka::PendingMessage)`.
+    #
     # @return [Kafka::Producer] the Kafka producer.
     def producer(
       compression_codec: nil,
@@ -254,7 +270,8 @@ module Kafka
       idempotent: false,
       transactional: false,
       transactional_id: nil,
-      transactional_timeout: 60
+      transactional_timeout: 60,
+      interceptors: []
     )
       cluster = initialize_cluster
       compressor = Compressor.new(
@@ -286,6 +303,8 @@ module Kafka
         retry_backoff: retry_backoff,
         max_buffer_size: max_buffer_size,
         max_buffer_bytesize: max_buffer_bytesize,
+        partitioner: @partitioner,
+        interceptors: interceptors
       )
     end
 
@@ -335,15 +354,26 @@ module Kafka
     # @param fetcher_max_queue_size [Integer] max number of items in the fetch queue that
     #   are stored for further processing. Note, that each item in the queue represents a
     #   response from a single broker.
+    # @param refresh_topic_interval [Integer] interval of refreshing the topic list.
+    #   If it is 0, the topic list won't be refreshed (default)
+    #   If it is n (n > 0), the topic list will be refreshed every n seconds
+    # @param interceptors [Array<Object>] a list of consumer interceptors that implement
+    #   `call(Kafka::FetchedBatch)`.
+    # @param assignment_strategy [Object] a partition assignment strategy that
+    #   implements `protocol_type()`, `user_data()`, and `assign(members:, partitions:)`
     # @return [Consumer]
     def consumer(
         group_id:,
         session_timeout: 30,
+        rebalance_timeout: 60,
         offset_commit_interval: 10,
         offset_commit_threshold: 0,
         heartbeat_interval: 10,
         offset_retention_time: nil,
-        fetcher_max_queue_size: 100
+        fetcher_max_queue_size: 100,
+        refresh_topic_interval: 0,
+        interceptors: [],
+        assignment_strategy: nil
     )
       cluster = initialize_cluster
 
@@ -359,8 +389,10 @@ module Kafka
         logger: @logger,
         group_id: group_id,
         session_timeout: session_timeout,
+        rebalance_timeout: rebalance_timeout,
         retention_time: retention_time,
         instrumenter: instrumenter,
+        assignment_strategy: assignment_strategy
       )
 
       fetcher = Fetcher.new(
@@ -396,6 +428,8 @@ module Kafka
         fetcher: fetcher,
         session_timeout: session_timeout,
         heartbeat: heartbeat,
+        refresh_topic_interval: refresh_topic_interval,
+        interceptors: interceptors
       )
     end
 
@@ -635,6 +669,14 @@ module Kafka
       @cluster.describe_group(group_id)
     end
 
+    # Fetch all committed offsets for a consumer group
+    #
+    # @param group_id [String] the id of the consumer group
+    # @return [Hash<String, Hash<Integer, Kafka::Protocol::OffsetFetchResponse::PartitionOffsetInfo>>]
+    def fetch_group_offsets(group_id)
+      @cluster.fetch_group_offsets(group_id)
+    end
+
     # Create partitions for a topic.
     #
     # @param name [String] the name of the topic.
@@ -681,6 +723,14 @@ module Kafka
     # @return [Integer] the number of partitions in the topic.
     def partitions_for(topic)
       @cluster.partitions_for(topic).count
+    end
+
+    # Counts the number of replicas for a topic's partition
+    #
+    # @param topic [String]
+    # @return [Integer] the number of replica nodes for the topic's partition
+    def replica_count_for(topic)
+      @cluster.partitions_for(topic).first.replicas.count
     end
 
     # Retrieve the offset of the last message in a partition. If there are no

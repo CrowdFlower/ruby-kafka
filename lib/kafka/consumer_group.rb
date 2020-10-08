@@ -1,24 +1,29 @@
 # frozen_string_literal: true
 
 require "set"
+require "kafka/consumer_group/assignor"
 require "kafka/round_robin_assignment_strategy"
 
 module Kafka
   class ConsumerGroup
     attr_reader :assigned_partitions, :generation_id, :group_id
 
-    def initialize(cluster:, logger:, group_id:, session_timeout:, retention_time:, instrumenter:)
+    def initialize(cluster:, logger:, group_id:, session_timeout:, rebalance_timeout:, retention_time:, instrumenter:, assignment_strategy:)
       @cluster = cluster
       @logger = TaggedLogger.new(logger)
       @group_id = group_id
       @session_timeout = session_timeout
+      @rebalance_timeout = rebalance_timeout
       @instrumenter = instrumenter
       @member_id = ""
       @generation_id = nil
       @members = {}
       @topics = Set.new
       @assigned_partitions = {}
-      @assignment_strategy = RoundRobinAssignmentStrategy.new(cluster: @cluster)
+      @assignor = Assignor.new(
+        cluster: cluster,
+        strategy: assignment_strategy || RoundRobinAssignmentStrategy.new
+      )
       @retention_time = retention_time
     end
 
@@ -112,8 +117,11 @@ module Kafka
 
         Protocol.handle_error(response.error_code)
       end
-    rescue ConnectionError, UnknownMemberId, RebalanceInProgress, IllegalGeneration => e
+    rescue ConnectionError, UnknownMemberId, IllegalGeneration => e
       @logger.error "Error sending heartbeat: #{e}"
+      raise HeartbeatError, e
+    rescue RebalanceInProgress => e
+      @logger.warn "Error sending heartbeat: #{e}"
       raise HeartbeatError, e
     rescue NotCoordinatorForGroup
       @logger.error "Failed to find coordinator for group `#{@group_id}`; retrying..."
@@ -140,7 +148,11 @@ module Kafka
         response = coordinator.join_group(
           group_id: @group_id,
           session_timeout: @session_timeout,
+          rebalance_timeout: @rebalance_timeout,
           member_id: @member_id,
+          topics: @topics,
+          protocol_name: @assignor.protocol_name,
+          user_data: @assignor.user_data,
         )
 
         Protocol.handle_error(response.error_code)
@@ -159,6 +171,12 @@ module Kafka
       sleep 1
 
       retry
+    rescue CoordinatorLoadInProgress
+      @logger.error "Coordinator broker still loading, retrying in 1s..."
+
+      sleep 1
+
+      retry
     end
 
     def group_leader?
@@ -171,8 +189,8 @@ module Kafka
       if group_leader?
         @logger.info "Chosen as leader of group `#{@group_id}`"
 
-        group_assignment = @assignment_strategy.assign(
-          members: @members.keys,
+        group_assignment = @assignor.assign(
+          members: @members,
           topics: @topics,
         )
       end

@@ -45,6 +45,10 @@ module Kafka
         new_topics = topics - @target_topics
 
         unless new_topics.empty?
+          if new_topics.any? { |topic| topic.nil? or topic.empty? }
+            raise ArgumentError, "Topic must not be nil or empty"
+          end
+
           @logger.info "New topics added to target list: #{new_topics.to_a.join(', ')}"
 
           @target_topics.merge(new_topics)
@@ -284,6 +288,20 @@ module Kafka
       group = response.groups.first
       Protocol.handle_error(group.error_code)
       group
+    end
+
+    def fetch_group_offsets(group_id)
+      topics = get_group_coordinator(group_id: group_id)
+        .fetch_offsets(group_id: group_id, topics: nil)
+        .topics
+
+      topics.each do |_, partitions|
+        partitions.each do |_, response|
+          Protocol.handle_error(response.error_code)
+        end
+      end
+
+      topics
     end
 
     def create_partitions_for(name, num_partitions:, timeout:)
