@@ -366,8 +366,8 @@ describe Kafka::Consumer do
       context 'with subsequent group generations' do
         let(:generation_ids) { [1, 2] }
 
-        it 'removes local offsets for partitions it is no longer assigned' do
-          expect(offset_manager).to receive(:clear_offsets_excluding).with(reassigned_partitions)
+        it 'clears local offsets' do
+          expect(offset_manager).to receive(:clear_offsets)
 
           expect do
             consumer.each_message do |message|
