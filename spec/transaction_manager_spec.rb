@@ -4,6 +4,7 @@ describe ::Kafka::TransactionManager do
   let!(:logger) { LOGGER }
   let!(:cluster) { double(:cluster) }
   let!(:transaction_coordinator) { double(:broker) }
+  let!(:group_coordinator) { double(:broker) }
 
   let!(:manager) do
     described_class.new(logger: logger, cluster: cluster)
@@ -12,6 +13,9 @@ describe ::Kafka::TransactionManager do
   before do
     allow(cluster).to receive(:get_transaction_coordinator).and_return(
       transaction_coordinator
+    )
+    allow(cluster).to receive(:get_group_coordinator).and_return(
+      group_coordinator
     )
     allow(transaction_coordinator).to receive(:init_producer_id).and_return(
       Kafka::Protocol::InitProducerIDResponse.new(
@@ -586,9 +590,10 @@ describe ::Kafka::TransactionManager do
             error_code: 0
           )
         )
-        allow(transaction_coordinator).to receive(:txn_offset_commit).and_return(
-          Kafka::Protocol::TxnOffsetCommitResponse.new(
-            error_code: 0
+        allow(group_coordinator).to receive(:txn_offset_commit).and_return(
+          success_txn_offset_commit_response(
+            'hello' => [1],
+            'world' => [2]
           )
         )
       end
@@ -596,13 +601,29 @@ describe ::Kafka::TransactionManager do
       it 'notifies transaction coordinator' do
         manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
         expect(transaction_coordinator).to have_received(:add_offsets_to_txn)
-        expect(transaction_coordinator).to have_received(:txn_offset_commit)
+        expect(group_coordinator).to have_received(:txn_offset_commit)
       end
     end
   end
 end
 
 def success_add_partitions_to_txn_response(topics)
+  Kafka::Protocol::AddPartitionsToTxnResponse.new(
+    errors: topics.map do |topic, partitions|
+      Kafka::Protocol::AddPartitionsToTxnResponse::TopicPartitionsError.new(
+        topic: topic,
+        partitions: partitions.map do |partition|
+          Kafka::Protocol::AddPartitionsToTxnResponse::PartitionError.new(
+            partition: partition,
+            error_code: 0
+          )
+        end
+      )
+    end
+  )
+end
+
+def success_txn_offset_commit_response(topics)
   Kafka::Protocol::AddPartitionsToTxnResponse.new(
     errors: topics.map do |topic, partitions|
       Kafka::Protocol::AddPartitionsToTxnResponse::TopicPartitionsError.new(
