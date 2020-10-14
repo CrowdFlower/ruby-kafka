@@ -591,7 +591,7 @@ describe ::Kafka::TransactionManager do
           )
         )
         allow(group_coordinator).to receive(:txn_offset_commit).and_return(
-          success_txn_offset_commit_response(
+          txn_offset_commit_response(
             'hello' => [1],
             'world' => [2]
           )
@@ -602,6 +602,62 @@ describe ::Kafka::TransactionManager do
         manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
         expect(transaction_coordinator).to have_received(:add_offsets_to_txn)
         expect(group_coordinator).to have_received(:txn_offset_commit)
+      end
+    end
+
+    context 'transaction coordinator returns error' do
+      before do
+        manager.init_transactions
+        manager.begin_transaction
+        allow(transaction_coordinator).to receive(:add_offsets_to_txn).and_return(
+          Kafka::Protocol::AddOffsetsToTxnResponse.new(
+            error_code: 47
+          )
+        )
+      end
+
+      it 'raises exception' do
+        expect do
+          manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
+        end.to raise_error(Kafka::InvalidProducerEpochError)
+      end
+
+      it 'changes state to error' do
+        begin
+          manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
+        rescue; end
+        expect(manager.error?).to eql(true)
+      end
+    end
+
+    context 'group coordinator returns error' do
+      before do
+        manager.init_transactions
+        manager.begin_transaction
+        allow(transaction_coordinator).to receive(:add_offsets_to_txn).and_return(
+          Kafka::Protocol::AddOffsetsToTxnResponse.new(
+            error_code: 0
+          )
+        )
+        allow(group_coordinator).to receive(:txn_offset_commit).and_return(
+          txn_offset_commit_response(
+            { 'hello' => [1], 'world' => [2] },
+            error_code: 47
+          )
+        )
+      end
+
+      it 'raises exception' do
+        expect do
+          manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
+        end.to raise_error(Kafka::InvalidProducerEpochError)
+      end
+
+      it 'changes state to error' do
+        begin
+          manager.send_offsets_to_txn(offsets: [1, 2], group_id: 1)
+        rescue; end
+        expect(manager.error?).to eql(true)
       end
     end
   end
@@ -623,7 +679,7 @@ def success_add_partitions_to_txn_response(topics)
   )
 end
 
-def success_txn_offset_commit_response(topics)
+def txn_offset_commit_response(topics, error_code: 0)
   Kafka::Protocol::AddPartitionsToTxnResponse.new(
     errors: topics.map do |topic, partitions|
       Kafka::Protocol::AddPartitionsToTxnResponse::TopicPartitionsError.new(
@@ -631,7 +687,7 @@ def success_txn_offset_commit_response(topics)
         partitions: partitions.map do |partition|
           Kafka::Protocol::AddPartitionsToTxnResponse::PartitionError.new(
             partition: partition,
-            error_code: 0
+            error_code: error_code
           )
         end
       )

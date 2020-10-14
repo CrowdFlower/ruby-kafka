@@ -261,6 +261,11 @@ module Kafka
           end
         end
       end
+
+      nil
+    rescue
+      @transaction_state.transition_to!(TransactionStateMachine::ERROR)
+      raise
     end
 
     def in_transaction?
