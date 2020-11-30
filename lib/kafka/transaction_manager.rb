@@ -90,7 +90,7 @@ module Kafka
       @transaction_partitions = {}
       @transaction_state.transition_to!(TransactionStateMachine::READY)
 
-      @logger.info "Transaction #{@transactional_id} is initialized, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
+      @logger.debug "Transaction #{@transactional_id} is initialized, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
 
       nil
     rescue
@@ -114,7 +114,7 @@ module Kafka
             new_topic_partitions[topic] ||= []
             new_topic_partitions[topic] << partition
 
-            @logger.info "Adding parition #{topic}/#{partition}  to transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
+            @logger.debug "Adding partition #{topic}/#{partition} to transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
           end
         end
       end
@@ -151,7 +151,7 @@ module Kafka
       raise Kafka::InvalidTxnStateError, 'Transaction is not ready' unless @transaction_state.ready?
       @transaction_state.transition_to!(TransactionStateMachine::IN_TRANSACTION)
 
-      @logger.info "Begin transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
+      @logger.debug "Begin transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
 
       nil
     rescue
@@ -173,7 +173,7 @@ module Kafka
 
       @transaction_state.transition_to!(TransactionStateMachine::COMMITTING_TRANSACTION)
 
-      @logger.info "Commiting transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
+      @logger.debug "Committing transaction #{@transactional_id}, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
 
       retry_error_handler do
         response = transaction_coordinator.end_txn(
@@ -183,7 +183,7 @@ module Kafka
           transaction_result: TRANSACTION_RESULT_COMMIT
         )
         Protocol.handle_error(response.error_code)
-        @logger.info "Transaction #{@transactional_id} is committed, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
+        @logger.debug "Transaction #{@transactional_id} is committed, Producer ID: #{@producer_id} (Epoch #{@producer_epoch})"
       end
 
       complete_transaction
