@@ -129,6 +129,16 @@ Or install it yourself as:
     <td>Limited support</td>
     <td>Limited support</td>
   </tr>
+  <tr>
+    <th>Kafka 2.6</th>
+    <td>Limited support</td>
+    <td>Limited support</td>
+  </tr>
+  <tr>
+    <th>Kafka 2.7</th>
+    <td>Limited support</td>
+    <td>Limited support</td>
+  </tr>
 </table>
 
 This library is targeting Kafka 0.9 with the v0.4.x series and Kafka 0.10 with the v0.5.x series. There's limited support for Kafka 0.8, and things should work with Kafka 0.11, although there may be performance issues due to changes in the protocol.
@@ -144,6 +154,8 @@ This library is targeting Kafka 0.9 with the v0.4.x series and Kafka 0.10 with t
 - **Kafka 2.3:** Everything that works with Kafka 2.2 should still work, but so far no features specific to Kafka 2.3 have been added.
 - **Kafka 2.4:** Everything that works with Kafka 2.3 should still work, but so far no features specific to Kafka 2.4 have been added.
 - **Kafka 2.5:** Everything that works with Kafka 2.4 should still work, but so far no features specific to Kafka 2.5 have been added.
+- **Kafka 2.6:** Everything that works with Kafka 2.5 should still work, but so far no features specific to Kafka 2.6 have been added.
+- **Kafka 2.7:** Everything that works with Kafka 2.6 should still work, but so far no features specific to Kafka 2.7 have been added.
 
 This library requires Ruby 2.1 or higher.
 
@@ -162,6 +174,12 @@ require "kafka"
 # cluster topology. At least one of these *must* be available. `client_id` is
 # used to identify this client in logs and metrics. It's optional but recommended.
 kafka = Kafka.new(["kafka1:9092", "kafka2:9092"], client_id: "my-application")
+```
+
+You can also use a hostname with seed brokers' IP addresses:
+
+```ruby
+kafka = Kafka.new("seed-brokers:9092", client_id: "my-application", resolve_seed_brokers: true)
 ```
 
 ### Producing Messages to Kafka
@@ -368,6 +386,16 @@ Or, simply create a Proc handling the partitioning logic instead of having to ad
 ```ruby
 partitioner = -> (partition_count, message) { ... }
 Kafka.new(partitioner: partitioner, ...)
+```
+
+##### Supported partitioning schemes
+
+In order for semantic partitioning to work a `partition_key` must map to the same partition number every time. The general approach, and the one used by this library, is to hash the key and mod it by the number of partitions. There are many different algorithms that can be used to calculate a hash. By default `crc32` is used. `murmur2` is also supported for compatibility with Java based Kafka producers.
+
+To use `murmur2` hashing pass it as an argument to `Partitioner`. For example:
+
+```ruby
+Kafka.new(partitioner: Kafka::Partitioner.new(hash_function: :murmur2))
 ```
 
 #### Buffering and Error Handling
