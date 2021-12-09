@@ -348,8 +348,8 @@ module Kafka
     # consumer.
     #
     # @return [nil]
-    def send_offsets_to_transaction(batch:, group_id:)
-      @transaction_manager.send_offsets_to_txn(offsets: { batch.topic => { batch.partition => { offset: batch.last_offset + 1, leader_epoch: batch.leader_epoch } } }, group_id: group_id)
+    def send_offsets_to_transaction(batch:, group_id:, offset: nil)
+      @transaction_manager.send_offsets_to_txn(offsets: { batch.topic => { batch.partition => { offset: (offset || batch.last_offset) + 1, leader_epoch: batch.leader_epoch } } }, group_id: group_id)
     end
 
     # Syntactic sugar to enable easier transaction usage. Do the following steps
