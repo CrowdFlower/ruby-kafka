@@ -67,18 +67,22 @@ module Kafka
         # connections during the connect phase properly, because IO.select only partially works.
         # Instead, you have to retry.
         @ssl_socket.connect_nonblock
-      rescue OpenSSL::SSL::SSLErrorWaitReadable, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable
+      rescue OpenSSL::SSL::SSLErrorWaitReadable, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable => e
         if select_with_timeout(@ssl_socket, :connect_read)
+          puts "===ssl_socket.connect_nonblock readable retry, #{e.class.name}, #{e.message}"
           retry
         else
+          puts "===ssl_socket.connect_nonblock readable timeout, #{e.class.name}, #{e.message}"
           @ssl_socket.close
           close
           raise Errno::ETIMEDOUT
         end
-      rescue OpenSSL::SSL::SSLError, IO::WaitWritable
+      rescue OpenSSL::SSL::SSLError, IO::WaitWritable => e
         if select_with_timeout(@ssl_socket, :connect_write)
+          puts "===ssl_socket.connect_nonblock writable retry, #{e.class.name}, #{e.message}"
           retry
         else
+          puts "===ssl_socket.connect_nonblock writable timeout, #{e.class.name}, #{e.message}"
           close
           raise Errno::ETIMEDOUT
         end
