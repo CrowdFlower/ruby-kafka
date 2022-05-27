@@ -67,7 +67,7 @@ module Kafka
         # connections during the connect phase properly, because IO.select only partially works.
         # Instead, you have to retry.
         @ssl_socket.connect_nonblock
-      rescue Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable
+      rescue OpenSSL::SSL::SSLErrorWaitReadable, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable
         if select_with_timeout(@ssl_socket, :connect_read)
           retry
         else
@@ -75,7 +75,7 @@ module Kafka
           close
           raise Errno::ETIMEDOUT
         end
-      rescue IO::WaitWritable
+      rescue OpenSSL::SSL::SSLError, IO::WaitWritable
         if select_with_timeout(@ssl_socket, :connect_write)
           retry
         else
@@ -101,13 +101,13 @@ module Kafka
           # catch exceptions from read_nonblock and gradually build up
           # our read buffer.
           buffer << @ssl_socket.read_nonblock(num_bytes - buffer.length)
-        rescue IO::WaitReadable
+        rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable
           if select_with_timeout(@ssl_socket, :read)
             retry
           else
             raise Errno::ETIMEDOUT
           end
-        rescue IO::WaitWritable
+        rescue OpenSSL::SSL::SSLErrorWaitWritable, IO::WaitWritable
           if select_with_timeout(@ssl_socket, :write)
             retry
           else
