@@ -12,7 +12,7 @@ module Kafka
   # raised.
   #
   class SSLSocketWithTimeout
-
+    SSL_RETRY_BACKOFF = 0.05
     # Opens a socket.
     #
     # @param host [String]
@@ -21,12 +21,13 @@ module Kafka
     # @param timeout [Integer] the read and write timeout, in seconds.
     # @param ssl_context [OpenSSL::SSL::SSLContext] which SSLContext the ssl connection should use
     # @raise [Errno::ETIMEDOUT] if the timeout is exceeded.
-    def initialize(host, port, connect_timeout: nil, timeout: nil, ssl_context:)
+    def initialize(host, port, connect_timeout: nil, timeout: nil, ssl_context:, ssl_retry_backoff: nil)
       addr = Socket.getaddrinfo(host, nil)
       sockaddr = Socket.pack_sockaddr_in(port, addr[0][3])
 
       @connect_timeout = connect_timeout
       @timeout = timeout
+      @ssl_retry_backoff = ssl_retry_backoff || SSL_RETRY_BACKOFF
 
       @tcp_socket = Socket.new(Socket.const_get(addr[0][0]), Socket::SOCK_STREAM, 0)
       @tcp_socket.setsockopt(Socket::IPPROTO_TCP, Socket::TCP_NODELAY, 1)
@@ -70,6 +71,7 @@ module Kafka
       rescue OpenSSL::SSL::SSLErrorWaitReadable, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable => e
         if select_with_timeout(@ssl_socket, :connect_read)
           puts "===ssl_socket.connect_nonblock readable retry, #{e.class.name}, #{e.message}"
+          sleep @ssl_retry_backoff
           retry
         else
           puts "===ssl_socket.connect_nonblock readable timeout, #{e.class.name}, #{e.message}"
@@ -80,6 +82,7 @@ module Kafka
       rescue OpenSSL::SSL::SSLError, IO::WaitWritable => e
         if select_with_timeout(@ssl_socket, :connect_write)
           puts "===ssl_socket.connect_nonblock writable retry, #{e.class.name}, #{e.message}"
+          sleep @ssl_retry_backoff
           retry
         else
           puts "===ssl_socket.connect_nonblock writable timeout, #{e.class.name}, #{e.message}"
@@ -107,12 +110,14 @@ module Kafka
           buffer << @ssl_socket.read_nonblock(num_bytes - buffer.length)
         rescue OpenSSL::SSL::SSLErrorWaitReadable, IO::WaitReadable
           if select_with_timeout(@ssl_socket, :read)
+            sleep @ssl_retry_backoff
             retry
           else
             raise Errno::ETIMEDOUT
           end
         rescue OpenSSL::SSL::SSLErrorWaitWritable, IO::WaitWritable
           if select_with_timeout(@ssl_socket, :write)
+            sleep @ssl_retry_backoff
             retry
           else
             raise Errno::ETIMEDOUT
@@ -143,6 +148,7 @@ module Kafka
         rescue OpenSSL::SSL::SSLError, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitWritable => error
           if error.is_a?(OpenSSL::SSL::SSLError) && error.message == 'write would block'
             if select_with_timeout(@ssl_socket, :write)
+              sleep @ssl_retry_backoff
               retry
             else
               raise Errno::ETIMEDOUT
