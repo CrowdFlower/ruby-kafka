@@ -19,7 +19,8 @@ module Kafka
         end
         context_params = {
           cert: OpenSSL::X509::Certificate.new(client_cert),
-          key: cert_key
+          key: cert_key,
+          ssl_version: :TLSv1_2
         }
         if client_cert_chain
           certs = []
