@@ -19,9 +19,7 @@ module Kafka
         end
         context_params = {
           cert: OpenSSL::X509::Certificate.new(client_cert),
-          key: cert_key,
-          ssl_version: :TLSv1,
-          ciphers: ['RC4-SHA']
+          key: cert_key
         }
         if client_cert_chain
           certs = []
@@ -32,6 +30,8 @@ module Kafka
           context_params[:extra_chain_cert] = certs
         end
         ssl_context.set_params(context_params)
+        ssl_context.ssl_version = :TLSv1
+        ssl_context.ciphers = ['RC4-SHA']
       elsif client_cert && !client_cert_key
         raise ArgumentError, "Kafka client initialized with `ssl_client_cert` but no `ssl_client_cert_key`. Please provide both."
       elsif !client_cert && client_cert_key

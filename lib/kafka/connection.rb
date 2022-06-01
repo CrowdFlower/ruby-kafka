@@ -145,6 +145,10 @@ module Kafka
     rescue SocketError, Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
       @logger.error "Failed to connect to #{self}: #{e}"
       raise ConnectionError, e
+    rescue OpenSSL::SSL::SSLError => e
+      puts "===ssl_error: #{e.message}"
+      sleep 0.1
+      retry
     end
 
     def idle?
