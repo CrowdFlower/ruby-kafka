@@ -20,7 +20,8 @@ module Kafka
         context_params = {
           cert: OpenSSL::X509::Certificate.new(client_cert),
           key: cert_key,
-          ssl_version: :TLSv1_2
+          ssl_version: :TLSv1,
+          ciphers: ['RC4-SHA']
         }
         if client_cert_chain
           certs = []
