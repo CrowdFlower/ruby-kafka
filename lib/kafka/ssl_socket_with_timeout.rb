@@ -70,7 +70,7 @@ module Kafka
         @ssl_socket.connect_nonblock
       rescue OpenSSL::SSL::SSLErrorWaitReadable, Errno::EAGAIN, Errno::EWOULDBLOCK, IO::WaitReadable => e
         if select_with_timeout(@ssl_socket, :connect_read)
-          puts "===ssl_socket.connect_nonblock readable retry, #{e.class.name}, #{e.message}"
+          puts "===ssl_socket.readable:#{object_id}, #{e.class.name}, #{e.message}"
           sleep @ssl_retry_backoff
           retry
         else
@@ -81,7 +81,7 @@ module Kafka
         end
       rescue OpenSSL::SSL::SSLErrorWaitWritable, IO::WaitWritable => e
         if select_with_timeout(@ssl_socket, :connect_write)
-          puts "===ssl_socket.connect_nonblock writable retry, #{e.class.name}, #{e.message}"
+          puts "===ssl_socket.writable:#{object_id}, #{e.class.name}, #{e.message}"
           sleep @ssl_retry_backoff
           retry
         else

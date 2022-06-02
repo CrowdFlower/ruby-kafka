@@ -199,7 +199,7 @@ module Kafka
     def send_request(request)
       connection.send_request(request)
     rescue IdleConnection
-      @logger.warn "Connection has been unused for too long, re-connecting..."
+      @logger.warn "Connection has been unused for too long, re-connecting... #{self.to_s}"
       @connection.close rescue nil
       @connection = nil
       retry

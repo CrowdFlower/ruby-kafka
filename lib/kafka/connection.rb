@@ -94,7 +94,10 @@ module Kafka
         response_size: 0,
       }
 
-      raise IdleConnection if idle?
+      if idle?
+        @logger.debug "idle connection, last request: #{@last_request}"
+        raise IdleConnection
+      end
 
       @logger.push_tags(api_name)
       @instrumenter.instrument("request.connection", notification) do
@@ -146,8 +149,8 @@ module Kafka
       @logger.error "Failed to connect to #{self}: #{e}"
       raise ConnectionError, e
     rescue OpenSSL::SSL::SSLError => e
-      puts "===ssl_error: #{e.message}"
-      sleep 0.1
+      puts "===ssl_error:#{object_id}:#{@socket.object_id}: #{e.message}"
+      sleep 0.5
       retry
     end
 
