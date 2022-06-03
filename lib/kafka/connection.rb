@@ -29,6 +29,8 @@ module Kafka
   class Connection
     SOCKET_TIMEOUT = 10
     CONNECT_TIMEOUT = 10
+    SSL_ERROR_MAX_RETRIES = 100
+    SSL_ERROR_RETRY_BACKOFF = 0.1
 
     # Time after which an idle connection will be reopened.
     IDLE_TIMEOUT = 60 * 5
@@ -50,7 +52,7 @@ module Kafka
     #   broker. Default is 10 seconds.
     #
     # @return [Connection] a new connection.
-    def initialize(host:, port:, client_id:, logger:, instrumenter:, connect_timeout: nil, socket_timeout: nil, ssl_context: nil)
+    def initialize(host:, port:, client_id:, logger:, instrumenter:, connect_timeout: nil, socket_timeout: nil, ssl_context: nil, ssl_error_max_retries: nil, ssl_error_retry_backoff: nil)
       @host, @port, @client_id = host, port, client_id
       @logger = TaggedLogger.new(logger)
       @instrumenter = instrumenter
@@ -58,6 +60,9 @@ module Kafka
       @connect_timeout = connect_timeout || CONNECT_TIMEOUT
       @socket_timeout = socket_timeout || SOCKET_TIMEOUT
       @ssl_context = ssl_context
+      @ssl_error_max_retries = ssl_error_max_retries || SSL_ERROR_MAX_RETRIES
+      @ssl_error_retry_backoff = ssl_error_retry_backoff || SSL_ERROR_RETRY_BACKOFF
+      @ssl_error_retries = 0
 
       @socket = nil
       @last_request = nil
@@ -145,6 +150,15 @@ module Kafka
     rescue SocketError, Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
       @logger.error "Failed to connect to #{self}: #{e}"
       raise ConnectionError, e
+    rescue OpenSSL::SSL::SSLError => e
+      if @ssl_error_retries < @ssl_error_max_retries
+        @ssl_error_retries += 1
+        sleep @ssl_error_retry_backoff
+        retry
+      else
+        @logger.error "Failed to connect to #{self}: #{e}"
+        raise ConnectionError, e
+      end
     end
 
     def idle?

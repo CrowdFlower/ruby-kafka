@@ -75,7 +75,7 @@ module Kafka
           close
           raise Errno::ETIMEDOUT
         end
-      rescue OpenSSL::SSL::SSLError, IO::WaitWritable
+      rescue OpenSSL::SSL::SSLErrorWaitWritable, IO::WaitWritable
         if select_with_timeout(@ssl_socket, :connect_write)
           retry
         else
