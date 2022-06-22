@@ -112,5 +112,33 @@ describe Kafka::Connection do
       expect(event.payload[:request_size]).to eq 22
       expect(event.payload[:response_size]).to eq 12
     end
+
+    context 'get OpenSSL::SSL::SSLError' do
+      let(:connection) do
+        Kafka::Connection.new(
+          host: host,
+          port: port,
+          client_id: "test",
+          logger: logger,
+          instrumenter: Kafka::Instrumenter.new(client_id: "test"),
+          connect_timeout: 0.1,
+          socket_timeout: 0.1,
+          ssl_context: OpenSSL::SSL::SSLContext.new,
+          ssl_error_max_retries: 100,
+          ssl_error_retry_backoff: 0
+        )
+      end
+
+      before do
+        allow_any_instance_of(OpenSSL::SSL::SSLSocket).to(
+          receive(:connect_nonblock).and_raise(OpenSSL::SSL::SSLError)
+        )
+      end
+
+      it 'retries the error' do
+        expect(connection).to receive(:sleep).exactly(100).times
+        expect{ connection.send_request(request) }.to raise_error(Kafka::ConnectionError)
+      end
+    end
   end
 end
