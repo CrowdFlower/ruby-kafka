@@ -1,3 +1,4 @@
+# coding: utf-8
 # frozen_string_literal: true
 
 require "kafka/ssl_context"
@@ -38,8 +39,8 @@ module Kafka
     # @param ssl_ca_cert [String, Array<String>, nil] a PEM encoded CA cert, or an Array of
     #   PEM encoded CA certs, to use with an SSL connection.
     #
-    # @param ssl_ca_cert_file_path [String, nil] a path on the filesystem to a PEM encoded CA cert
-    #   to use with an SSL connection.
+    # @param ssl_ca_cert_file_path [String, Array<String>, nil] a path on the filesystem, or an
+    #    Array of paths, to PEM encoded CA cert(s) to use with an SSL connection.
     #
     # @param ssl_client_cert [String, nil] a PEM encoded client cert to use with an
     #   SSL connection. Must be used in combination with ssl_client_cert_key.
@@ -74,16 +75,26 @@ module Kafka
     #   the SSL certificate and the signing chain of the certificate have the correct domains
     #   based on the CA certificate
     #
+    # @param resolve_seed_brokers [Boolean] whether to resolve each hostname of the seed brokers.
+    #   If a broker is resolved to multiple IP addresses, the client tries to connect to each
+    #   of the addresses until it can connect.
+    #
     # @return [Client]
     def initialize(seed_brokers:, client_id: "ruby-kafka", logger: nil, connect_timeout: nil, socket_timeout: nil,
                    ssl_ca_cert_file_path: nil, ssl_ca_cert: nil, ssl_client_cert: nil, ssl_client_cert_key: nil,
                    ssl_client_cert_key_password: nil, ssl_client_cert_chain: nil, sasl_gssapi_principal: nil,
                    sasl_gssapi_keytab: nil, sasl_plain_authzid: '', sasl_plain_username: nil, sasl_plain_password: nil,
                    sasl_scram_username: nil, sasl_scram_password: nil, sasl_scram_mechanism: nil,
-                   sasl_over_ssl: true, ssl_ca_certs_from_system: false, partitioner: nil, sasl_oauth_token_provider: nil, ssl_verify_hostname: true)
+                   sasl_aws_msk_iam_access_key_id: nil,
+                   sasl_aws_msk_iam_secret_key_id: nil,
+                   sasl_aws_msk_iam_aws_region: nil,
+                   sasl_aws_msk_iam_session_token: nil,
+                   sasl_over_ssl: true, ssl_ca_certs_from_system: false, partitioner: nil, sasl_oauth_token_provider: nil, ssl_verify_hostname: true,
+                   resolve_seed_brokers: false)
       @logger = TaggedLogger.new(logger)
       @instrumenter = Instrumenter.new(client_id: client_id)
       @seed_brokers = normalize_seed_brokers(seed_brokers)
+      @resolve_seed_brokers = resolve_seed_brokers
 
       ssl_context = SslContext.build(
         ca_cert_file_path: ssl_ca_cert_file_path,
@@ -105,6 +116,10 @@ module Kafka
         sasl_scram_username: sasl_scram_username,
         sasl_scram_password: sasl_scram_password,
         sasl_scram_mechanism: sasl_scram_mechanism,
+        sasl_aws_msk_iam_access_key_id: sasl_aws_msk_iam_access_key_id,
+        sasl_aws_msk_iam_secret_key_id: sasl_aws_msk_iam_secret_key_id,
+        sasl_aws_msk_iam_aws_region: sasl_aws_msk_iam_aws_region,
+        sasl_aws_msk_iam_session_token: sasl_aws_msk_iam_session_token,
         sasl_oauth_token_provider: sasl_oauth_token_provider,
         logger: @logger
       )
@@ -204,6 +219,8 @@ module Kafka
       attempt = 1
 
       begin
+        @cluster.refresh_metadata_if_necessary!
+
         operation.execute
 
         unless buffer.empty?
@@ -811,6 +828,7 @@ module Kafka
         seed_brokers: @seed_brokers,
         broker_pool: broker_pool,
         logger: @logger,
+        resolve_seed_brokers: @resolve_seed_brokers,
       )
     end
 

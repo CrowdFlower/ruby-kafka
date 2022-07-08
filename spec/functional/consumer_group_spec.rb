@@ -476,12 +476,21 @@ describe "Consumer API", functional: true do
       end
     end
 
+    joined_consumers = []
     consumers = 2.times.map do |i|
       assignment_strategy = assignment_strategy_class.new(i + 1)
 
       kafka = Kafka.new(kafka_brokers, client_id: "test", logger: logger)
       consumer = kafka.consumer(group_id: group_id, offset_retention_time: offset_retention_time, assignment_strategy: assignment_strategy)
       consumer.subscribe(topic)
+
+      allow(consumer).to receive(:trigger_heartbeat).and_wrap_original do |m, *args|
+        joined_consumers |= [consumer]
+        # Wait until all the consumers try to join to prevent one consumer from processing all messages
+        raise Kafka::HeartbeatError if joined_consumers.size < consumers.size
+        m.call(*args)
+      end
+
       consumer
     end
 
@@ -507,6 +516,68 @@ describe "Consumer API", functional: true do
 
     expect(received_messages.values.flatten.map {|v| v.value.to_i }).to match_array messages
     expect(received_messages.values.map(&:count)).to match_array [messages.count / 3, messages.count / 3 * 2]
+  end
+
+  example "subscribing to different topics while in the same consumer group" do
+    topic1 = create_random_topic(num_partitions: 1)
+    topic2 = create_random_topic(num_partitions: 1)
+    messages = (1..500).to_a
+
+    begin
+      kafka = Kafka.new(kafka_brokers, client_id: "test")
+      producer = kafka.producer
+
+      messages[0..249].each do |i|
+        producer.produce(i.to_s, topic: topic1, partition: 0)
+      end
+
+      messages[250..500].each do |i|
+        producer.produce(i.to_s, topic: topic2, partition: 0)
+      end
+
+      producer.deliver_messages
+    end
+
+    group_id = "test#{rand(1000)}"
+
+    mutex = Mutex.new
+    received_messages = []
+
+    assignment_strategy_class = Kafka::RoundRobinAssignmentStrategy
+
+    consumers = [topic1, topic2].map do |topic|
+      assignment_strategy = assignment_strategy_class.new
+      kafka = Kafka.new(kafka_brokers, client_id: "test", logger: logger)
+      consumer = kafka.consumer(
+        group_id: group_id,
+        offset_retention_time: offset_retention_time,
+        assignment_strategy: assignment_strategy
+      )
+      consumer.subscribe(topic)
+      consumer
+    end
+
+    threads = consumers.map do |consumer|
+      t = Thread.new do
+        consumer.each_message do |message|
+          mutex.synchronize do
+            received_messages << message
+
+            if received_messages.count == messages.count
+              consumers.each(&:stop)
+            end
+          end
+        end
+      end
+
+      t.abort_on_exception = true
+
+      t
+    end
+
+    threads.each(&:join)
+
+    expect(received_messages.map(&:value).map(&:to_i)).to match_array messages
   end
 
   def wait_until(timeout:)
