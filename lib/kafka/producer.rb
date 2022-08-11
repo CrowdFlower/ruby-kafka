@@ -205,6 +205,7 @@ module Kafka
         partition_key: partition_key && partition_key.to_s,
         create_time: create_time
       ))
+      @logger.info("___produce : buffer #{@buffer.size}, pending #{@pending_message_queue.size}")
 
       if buffer_size >= @max_buffer_size
         buffer_overflow topic,
@@ -381,7 +382,7 @@ module Kafka
 
     def deliver_messages_with_retries(notification)
       attempt = 0
-
+      @logger.info("___deliver_messages_with_retries:begin buffer #{@buffer.size}, pending #{@pending_message_queue.size}")
       @cluster.add_target_topics(@target_topics)
 
       operation = ProduceOperation.new(
@@ -427,14 +428,17 @@ module Kafka
           break
         end
       end
+      @logger.info("___deliver_messages_with_retries:end buffer #{@buffer.size}, pending #{@pending_message_queue.size}")
 
       unless @pending_message_queue.empty?
+        @logger.info("___deliver_messages_with_retries:fail_queue buffer #{@buffer.size}, pending #{@pending_message_queue.size}")
         # Mark the cluster as stale in order to force a cluster metadata refresh.
         @cluster.mark_as_stale!
         raise DeliveryFailed.new("Failed to assign partitions to #{@pending_message_queue.size} messages", buffer_messages)
       end
 
       unless @buffer.empty?
+        @logger.info("___deliver_messages_with_retries:fail_buffer buffer #{@buffer.size}, pending #{@pending_message_queue.size}")
         raise DeliveryFailed.new("Failed to send messages to #{pretty_partitions}", buffer_messages)
       end
     end
