@@ -591,10 +591,10 @@ describe ::Kafka::TransactionManager do
           )
         )
         allow(group_coordinator).to receive(:txn_offset_commit).and_return(
-          txn_offset_commit_response(
+          txn_offset_commit_response({
             'hello' => [1],
             'world' => [2]
-          )
+          })
         )
       end
 
@@ -680,12 +680,12 @@ def success_add_partitions_to_txn_response(topics)
 end
 
 def txn_offset_commit_response(topics, error_code: 0)
-  Kafka::Protocol::AddPartitionsToTxnResponse.new(
+  Kafka::Protocol::TxnOffsetCommitResponse.new(
     errors: topics.map do |topic, partitions|
-      Kafka::Protocol::AddPartitionsToTxnResponse::TopicPartitionsError.new(
+      Kafka::Protocol::TxnOffsetCommitResponse::TopicPartitionsError.new(
         topic: topic,
         partitions: partitions.map do |partition|
-          Kafka::Protocol::AddPartitionsToTxnResponse::PartitionError.new(
+          Kafka::Protocol::TxnOffsetCommitResponse::PartitionError.new(
             partition: partition,
             error_code: error_code
           )
