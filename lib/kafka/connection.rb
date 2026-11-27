@@ -177,6 +177,7 @@ module Kafka
         correlation_id: @correlation_id,
         client_id: @client_id,
         request: request,
+        flexible: request.respond_to?(:flexible?) && request.flexible?,
       )
 
       data = Kafka::Protocol::Encoder.encode_with(message)

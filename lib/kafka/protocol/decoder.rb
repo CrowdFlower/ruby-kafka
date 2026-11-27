@@ -129,6 +129,53 @@ module Kafka
         data & 0b1 != 0 ? ~(data >> 1) : (data >> 1)
       end
 
+      # Reads an unsigned varint. Flexible protocol versions use these for
+      # lengths, rather than the zigzag encoding of #varint.
+      #
+      # @return [Integer]
+      def unsigned_varint
+        group = 0
+        data = 0
+        while (chunk = int8) & 0x80 != 0
+          data |= (chunk & 0x7f) << group
+          group += 7
+        end
+        data | (chunk << group)
+      end
+
+      # Decodes a string prefixed by its length plus one, as an unsigned
+      # varint. A length of zero means nil.
+      #
+      # @return [String, nil]
+      def compact_string
+        size = unsigned_varint
+
+        size.zero? ? nil : read(size - 1)
+      end
+
+      # Decodes an array prefixed by its size plus one, as an unsigned varint.
+      #
+      # @return [Array, nil]
+      def compact_array(&block)
+        size = unsigned_varint
+        return nil if size.zero?
+
+        (size - 1).times.map { block.call }
+      end
+
+      # Consumes a tagged field buffer. We don't read any tagged fields, but
+      # the bytes have to be skipped for the rest of the response to decode.
+      #
+      # @return [nil]
+      def tagged_fields
+        unsigned_varint.times do
+          unsigned_varint
+          read(unsigned_varint)
+        end
+
+        nil
+      end
+
       # Decodes a list of bytes from the IO object.
       #
       # @return [String]
