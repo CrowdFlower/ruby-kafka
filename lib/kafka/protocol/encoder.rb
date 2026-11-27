@@ -141,6 +141,43 @@ module Kafka
         write(chunks.pack("C*"))
       end
 
+      # Writes an integer as an unsigned varint. Flexible protocol versions use
+      # these for lengths, rather than the zigzag encoding of #write_varint.
+      #
+      # @param int [Integer]
+      # @return [nil]
+      def write_unsigned_varint(int)
+        chunks = []
+        while int >> 7 != 0
+          chunks << (int & 0x7f | 0x80)
+          int >>= 7
+        end
+        chunks << int
+        write(chunks.pack("C*"))
+      end
+
+      # Writes a string prefixed by its length plus one, as an unsigned varint.
+      # A length of zero means nil.
+      #
+      # @param string [String, nil]
+      # @return [nil]
+      def write_compact_string(string)
+        if string.nil?
+          write_unsigned_varint(0)
+        else
+          write_unsigned_varint(string.bytesize + 1)
+          write(string)
+        end
+      end
+
+      # Writes an empty tagged field buffer. Every header and body in a
+      # flexible protocol version must end with one.
+      #
+      # @return [nil]
+      def write_tagged_fields
+        write_unsigned_varint(0)
+      end
+
       # Writes a byte string to the IO object.
       #
       # @param bytes [String]

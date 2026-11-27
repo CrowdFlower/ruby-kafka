@@ -153,9 +153,15 @@ module Kafka
     end
 
     def api_versions
-      request = Protocol::ApiVersionsRequest.new
+      response = send_request(Protocol::ApiVersionsRequest.new)
 
-      send_request(request)
+      # Brokers older than Kafka 2.4 reject the version that carries the
+      # client software name, so fall back to the bodyless form.
+      if response.error_code == Protocol::ApiVersionsResponse::FlexibleDecoder::UNSUPPORTED_VERSION
+        response = send_request(Protocol::ApiVersionsRequest.new(api_version: 0))
+      end
+
+      response
     end
 
     def describe_groups(**options)
